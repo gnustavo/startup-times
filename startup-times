@@ -1,0 +1,204 @@
+#!/usr/bin/env perl
+
+use 5.010;
+use utf8;
+use strict;
+use warnings;
+use Getopt::Long;
+use File::Slurp;
+use Benchmark qw/:hireswallclock/;
+
+# Programming languages specifications
+
+my %langs = (
+
+    Bash => {
+        version => '/bin/bash --version | head -1',
+        run     => sub { system(qw@/bin/bash -c :@) },
+    },
+
+    C => {
+        version => '/usr/bin/gcc --version | head -1',
+        compile => sub {
+            write_file('/tmp/null.c', 'int main() {}');
+            system('/usr/bin/gcc -O -o /tmp/null.c.out /tmp/null.c');
+        },
+        run     => sub { system('/tmp/null.c.out') },
+    },
+
+    Java => {
+        version => "/usr/bin/javac -version",
+        compile => sub {
+            write_file('/tmp/Null.java', <<'EOF');
+public class Null
+{
+    public static void main(String args[])
+    {
+    }
+}
+EOF
+            system("/usr/bin/javac /tmp/Null.java");
+        },
+        run     => sub { system("/usr/bin/java -cp /tmp Null") },
+    },
+
+    Ksh => {
+        version => '/usr/bin/ksh --version',
+        run     => sub { system(qw@/usr/bin/ksh -c :@) },
+    },
+
+    Lua => {
+        version => 'echo "print(_VERSION)" | /usr/bin/lua',
+        run     => sub { open(my $LUA, '|-', '/usr/bin/lua'); close $LUA },
+    },
+
+    Perl => {
+        version => '/usr/bin/perl --version | grep "This is perl"',
+        run     => sub { system(qw@/usr/bin/perl -e 0@) },
+    },
+
+    PHP => {
+        version => '/usr/bin/php --version | head -1',
+        run     => sub { system(qw@/usr/bin/php -n -r exit(0);@) },
+    },
+
+    Python => {
+        version => '/usr/bin/python --version',
+        run     => sub { system(qw@/usr/bin/python -c 0@) },
+    },
+
+    Ruby => {
+        version => '/usr/bin/ruby --version',
+        run     => sub { system(qw@/usr/bin/ruby -e 0@) },
+    },
+
+    TCL    => {
+        version => 'echo \'puts "TCL $tcl_version"\' | /usr/bin/tclsh',
+        run     => sub { open(my $TCL, '|-', '/usr/bin/tclsh'); close $TCL },
+    },
+
+    Tcsh => {
+        version => '/usr/bin/tcsh --version',
+        run     => sub { system(qw@/usr/bin/tcsh -c :@) },
+    },
+
+    Zsh => {
+        version => '/usr/bin/zsh --version',
+        run     => sub { system(qw@/usr/bin/zsh -c :@) },
+    },
+
+);
+
+# Point this to your installation of Sun's JDK if you want it to be
+# measured too.
+my $JavaSunHome = '/usr/java/jdk1.7.0_25';
+if (-d $JavaSunHome) {
+    $langs{JavaSun} = {
+        version => "$JavaSunHome/bin/javac -version",
+        compile => sub {
+            write_file('/tmp/Null.java', <<'EOF');
+public class Null
+{
+    public static void main(String args[])
+    {
+    }
+}
+EOF
+            system("$JavaSunHome/bin/javac /tmp/Null.java");
+        },
+        run     => sub { system("$JavaSunHome/bin/java -cp /tmp Null") },
+    };
+}
+
+my $usage = "$0 [--count N] [--langs L0,L1,L2,...]\n";
+my $Count = -1;
+my $Langs = join(',', keys %langs);
+GetOptions(
+    'count=i'    => \$Count,
+    'langs=s'    => \$Langs,
+) or die $usage;
+
+my @Langs = split ',', $Langs;
+
+foreach my $lang (sort @Langs) {
+    print "$lang: ";
+    system $langs{$lang}{version};
+    print "  ";
+    if (my $compile = $langs{$lang}{compile}) {
+        $compile->();
+    }
+    my $bm = $langs{$lang}{benchmark} = timethis($Count, $langs{$lang}{run});
+    $langs{$lang}{time} = 1000 * $bm->real / $bm->iters;
+} continue {
+    print "\n";
+}
+
+print "\n";
+printf "%8s %9s %9s %9s\n", qw:LANGUAGE CALLS/s NULL(ms) SCORE:;
+
+foreach my $lang (sort {$langs{$a}{time} <=> $langs{$b}{time}} @Langs) {
+    my $time = $langs{$lang}{time};
+    my $bm   = $langs{$lang}{benchmark};
+    state $mintime = $time;
+    printf "%8s %9.3f %9.3f %9.3f\n", $lang, $bm->iters / $bm->real, $time, $time / $mintime;
+}
+
+
+__END__
+=head1 NAME
+
+startup-times - Benchmark programming languages startup times
+
+=head1 SYNOPSIS
+
+startup-times [--count N] [--langs L0,L1,L2,...]
+
+=head1 DESCRIPTION
+
+This script measures the startup times of several programming
+languages.
+
+It's very crude and has been tested on Ubuntu 13.04 only.
+
+=head1 OPTIONS
+
+=over
+
+=item --count N
+
+The script uses the C<timethis> routine of the L<Benchmark> module to
+perform the time measurements. This option specifies the routines
+first argument, which, if positive, tells how many times each
+"program" will be invoked, and, if negative, tells how many seconds of
+CPU time must be consumed by repeated invokations until we're satisfied.
+
+By default it's -1.
+
+=item --langs L0,L1,L2,...
+
+By default the script will try to measure every language configured in
+the %langs variable. With this option you can specify a subset of
+languages to be measured.
+
+=back
+
+=head1 SEE ALSO
+
+My blog posts related to this study:
+
+=over
+
+=item * L<Programming languages startup times - 2013 roundup|http://blog.gnustavo.com/2013/07/programming-languages-startup-times.html>.
+
+=item * L<Programming languages start-up times|http://blog.gnustavo.com/2012/06/programming-languages-start-up-times.html>.
+
+=back
+
+=head1 COPYRIGHT
+
+This program is released into the public domain; you can redistribute
+it and/or modify it as you wish.
+
+=head1 AUTHOR
+
+Gustavo Chaves <gustavo@gnustavo.com>
